@@ -186,3 +186,5 @@ function soc = calculate_soc(current, time, Q_nominal, soc_init)
 
     soc = max(0, min(100, soc)); % Clamp SOC di antara 0–100%
 end
+
+%test
