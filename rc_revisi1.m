@@ -131,7 +131,7 @@ end
 
 % Inisialisasi awal
 lambda_min = 0.98;
-h = 0.7;
+h = 0.9;
 e_base = 0.05;
 
 n_param = 5;
@@ -147,7 +147,27 @@ y_hat_all = zeros(N, 1);
 
 lambda = lambda_min + (1 - lambda_min) * h^0;
 
+T = 5;
+
+R0_direct = zeros(1, N);
+R1_direct = zeros(1, N);
+R2_direct = zeros(1, N);
+C1_direct = zeros(1, N);
+C2_direct = zeros(1, N);
+
+R0_LM = zeros(1, N);
+R1_LM = zeros(1, N);
+R2_LM = zeros(1, N);
+C1_LM = zeros(1, N);
+C2_LM = zeros(1, N);
+
+params0 = [0.01, 0.01, 0.01, 1000, 1000];
+lb = [0, 0, 0, 0, 0];
+ub = [inf, inf, inf, inf, inf];
+
+%==========Loop Theta dan Parameter RC menggunakan LM dan direct Calculation===========%
 for k = 1:N
+    % === RLS Parameter Update ===
     phi_k = Phi(k,:)';
     E_k = E_target(k);
     y_hat = theta(:,k)' * phi_k;
@@ -161,20 +181,48 @@ for k = 1:N
 
     P = (1/lambda) * (P - K * phi_k' * P);
 
-    % Simpan variabel iteratif
+    % Simpan log RLS
     e_all(k) = error_k;
     lambda_all(k) = lambda;
     K_all(:,k) = K;
     y_hat_all(k) = y_hat;
 
-    % Update lambda sesuai paper
     epsilon_k = round((error_k / e_base)^2);
     lambda = lambda_min + (1 - lambda_min) * h^epsilon_k;
+
+    % === RC Extraction (Direct & LM) ===
+    th = theta(:,k);
+
+    % 1. Direct Calculation
+    theta1 = th(1); theta2 = th(2); theta3 = th(3); theta4 = th(4); theta5 = th(5);
+    a = (theta4 - theta3 - theta5) / (1 + theta1 - theta2);
+    b = T^2 * (1 + theta1 - theta2) / (4 * (1 - theta1 - theta2));
+    c = T * (1 + theta2) / (1 - theta1 - theta2);
+    d = -(theta3 - theta4 - theta5) / (1 - theta1 - theta2);
+    f = T * (theta5 - theta3) / (1 - theta1 - theta2);
+
+    tau1 = (c + sqrt(c^2 - 4*b)) / 2;
+    tau2 = (c - sqrt(c^2 - 4*b)) / 2;
+    R0_direct(k) = a;
+    R1_direct(k) = (tau1 * (d - a) + a * c - f) / (tau1 - tau2);
+    R2_direct(k) = d - a - R1_direct(k);
+    C1_direct(k) = tau1 / R1_direct(k);
+    C2_direct(k) = tau2 / R2_direct(k);
+
+    % 2. LM (Levenberg-Marquardt)
+    try
+        theta_exp_k = th;
+        params_hat = lsqnonlin(@(p) rc_theta_error(p, theta_exp_k, T), params0, lb, ub, optimset('Display','off'));
+        R0_LM(k) = params_hat(1);
+        R1_LM(k) = params_hat(2);
+        R2_LM(k) = params_hat(3);
+        C1_LM(k) = params_hat(4);
+        C2_LM(k) = params_hat(5);
+    catch
+        R0_LM(k) = NaN; R1_LM(k) = NaN; R2_LM(k) = NaN; C1_LM(k) = NaN; C2_LM(k) = NaN;
+    end
 end
 
-
-%===========================================================================%
-%========================Lavenberg-Marquadt=================================%
 %=======================Plot ke-5Theta====================================%
 N = size(theta, 2);
 
@@ -191,62 +239,7 @@ for i = 1:5
     end
     grid on;
 end
-T = 5;    % Sesuaikan sampling time Anda, misal T = 50
-N = size(theta, 2);
 
-% Alokasi array
-R0_direct = zeros(1, N);
-R1_direct = zeros(1, N);
-R2_direct = zeros(1, N);
-C1_direct = zeros(1, N);
-C2_direct = zeros(1, N);
-
-R0_LM = zeros(1, N);
-R1_LM = zeros(1, N);
-R2_LM = zeros(1, N);
-C1_LM = zeros(1, N);
-C2_LM = zeros(1, N);
-
-% Parameter inisialisasi untuk LM
-params0 = [0.01, 0.01, 0.01, 1000, 1000];
-lb = [0, 0, 0, 0, 0];
-ub = [inf, inf, inf, inf, inf];
-
-for k = 1:N
-    %=== Ambil theta tiap waktu ===%
-    th = theta(:, k);
-
-    %===== 1. Direct Calculation =====%
-    theta1 = th(1); theta2 = th(2); theta3 = th(3); theta4 = th(4); theta5 = th(5);
-
-    a = (theta4 - theta3 - theta5) / (1 + theta1 - theta2);
-    b = T^2 * (1 + theta1 - theta2) / (4 * (1 - theta1 - theta2));
-    c = T * (1 + theta2) / (1 - theta1 - theta2);
-    d = -(theta3 - theta4 - theta5) / (1 - theta1 - theta2);
-    f = T * (theta5 - theta3) / (1 - theta1 - theta2);
-
-    tau1 = (c + sqrt(c^2 - 4*b)) / 2;
-    tau2 = (c - sqrt(c^2 - 4*b)) / 2;
-    R0_direct(k) = a;
-    R1_direct(k) = (tau1 * (d - a) + a * c - f) / (tau1 - tau2);
-    R2_direct(k) = d - a - R1_direct(k);
-    C1_direct(k) = tau1 / R1_direct(k);
-    C2_direct(k) = tau2 / R2_direct(k);
-
-    %===== 2. LM (Levenberg-Marquardt) Fitting =====%
-    try
-        theta_exp_k = th;  % Target theta pada iterasi ke-k
-        params_hat = lsqnonlin(@(p) rc_theta_error(p, theta_exp_k, T), params0, lb, ub, optimset('Display','off'));
-        R0_LM(k) = params_hat(1);
-        R1_LM(k) = params_hat(2);
-        R2_LM(k) = params_hat(3);
-        C1_LM(k) = params_hat(4);
-        C2_LM(k) = params_hat(5);
-    catch
-        % Jika fitting gagal (misal, theta tidak valid), isi NaN
-        R0_LM(k) = NaN; R1_LM(k) = NaN; R2_LM(k) = NaN; C1_LM(k) = NaN; C2_LM(k) = NaN;
-    end
-end
 
 %--- Plot RC hasil Direct Calculation saja ---
 figure('Name','Direct Calculation RC Tracking');
